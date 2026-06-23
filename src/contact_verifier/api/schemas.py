@@ -61,6 +61,8 @@ class StatsResponse(BaseModel):
 
 
 class ExportResponse(BaseModel):
-    path: str
+    # The warehouse object key (relative to the stage), e.g.
+    # "tenant=<id>/contacts-<ts>.parquet" — not the server's filesystem path.
+    object_key: str
     n_rows: int
     format: str

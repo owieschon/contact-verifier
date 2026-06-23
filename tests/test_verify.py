@@ -97,6 +97,26 @@ def test_decided_answers_are_cached():
     assert calls["n"] == 1, "second lookup served from cache"
 
 
+def test_cache_is_bounded_lru():
+    """The cache must not grow without limit; least-recently-used entries are
+    evicted past cache_maxsize."""
+    calls = {"n": 0}
+
+    def resolve(_d):
+        calls["n"] += 1
+        return ["mx"]
+
+    checker = MxChecker(resolve_fn=resolve, rate_limit_per_s=0, cache_maxsize=2)
+    checker.has_mx("a.com")          # miss -> lookup (1); cache {a}
+    checker.has_mx("b.com")          # miss -> lookup (2); cache {a, b}
+    checker.has_mx("a.com")          # hit -> a becomes MRU; no lookup
+    checker.has_mx("c.com")          # miss -> lookup (3); inserts c, evicts LRU (b)
+    assert calls["n"] == 3
+    checker.has_mx("a.com")          # still cached; no lookup
+    checker.has_mx("b.com")          # evicted -> lookup (4)
+    assert calls["n"] == 4
+
+
 def test_rate_limit_waits_between_calls():
     sleeps: list[float] = []
     checker = MxChecker(

@@ -7,8 +7,9 @@ system gets:
     (timeout, SERVFAIL) but not on definitive ones (NXDOMAIN means the domain
     does not exist — retrying is pointless);
   - a client-side rate limit, so a bulk verify run doesn't hammer the resolver;
-  - a short-lived cache, because the same domains recur constantly in a contact
-    list and their MX records don't change between requests.
+  - a short-lived, size-bounded (LRU) cache, because the same domains recur
+    constantly in a contact list and their MX records don't change between
+    requests — bounded so a long-lived process can't grow it without limit.
 
 The resolver and the clock/sleep are injected so the whole thing is unit-testable
 with no network and no real waiting.
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import random
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -58,6 +60,7 @@ class MxChecker:
         rate_limit_per_s: float = 20.0,
         backoff_base_s: float = 0.1,
         cache_ttl_s: int = 3600,
+        cache_maxsize: int = 10_000,
         resolve_fn: Callable[[str], object] | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
@@ -67,14 +70,18 @@ class MxChecker:
         self._min_interval = 1.0 / rate_limit_per_s if rate_limit_per_s > 0 else 0.0
         self._backoff_base = backoff_base_s
         self._cache_ttl = cache_ttl_s
+        self._cache_maxsize = cache_maxsize
         self._clock = clock
         self._sleep = sleep
-        self._cache: dict[str, _CacheEntry] = {}
+        # Bounded LRU: a long-lived process verifying many domains can't grow the
+        # cache without limit. OrderedDict gives O(1) move-to-end / evict-oldest.
+        self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
         self._last_call_at = 0.0
 
     def has_mx(self, domain: str) -> MxResult:
         cached = self._cache.get(domain)
-        if cached and cached.expires_at > self._clock():
+        if cached is not None and cached.expires_at > self._clock():
+            self._cache.move_to_end(domain)  # mark recently used
             return cached.value
 
         result = self._lookup_with_retries(domain)
@@ -83,6 +90,9 @@ class MxChecker:
             self._cache[domain] = _CacheEntry(
                 value=result, expires_at=self._clock() + self._cache_ttl
             )
+            self._cache.move_to_end(domain)
+            if len(self._cache) > self._cache_maxsize:
+                self._cache.popitem(last=False)  # evict least-recently-used
         return result
 
     def _lookup_with_retries(self, domain: str) -> MxResult:

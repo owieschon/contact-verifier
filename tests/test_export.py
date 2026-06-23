@@ -42,3 +42,6 @@ def test_export_endpoint(client, provision, tmp_path, monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body["n_rows"] == 1 and body["format"] == "csv"
+    # the response is a warehouse object key, not the server filesystem path
+    assert body["object_key"].startswith("tenant=")
+    assert str(tmp_path) not in body["object_key"]

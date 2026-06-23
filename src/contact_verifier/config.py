@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     dns_max_retries: int = 3
     dns_rate_limit_per_s: float = 20.0
     verify_cache_ttl_s: int = 3600
+    verify_cache_maxsize: int = 10_000
 
     # Delivery export (the warehouse / S3 stand-in).
     warehouse_dir: str = "./warehouse"

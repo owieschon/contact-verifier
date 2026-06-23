@@ -6,6 +6,7 @@ unauthenticated or cross-tenant path to contact data.
 
 from __future__ import annotations
 
+import os
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -92,7 +93,8 @@ def export_contacts(
     session: SessionDep,
     fmt: Annotated[str, Query(alias="format", pattern="^(parquet|csv)$")] = "parquet",
 ) -> schemas.ExportResponse:
-    result = export_mod.export_tenant_contacts(
-        session, tenant.id, get_settings().warehouse_dir, fmt=fmt
-    )
-    return schemas.ExportResponse(path=result.path, n_rows=result.n_rows, format=result.fmt)
+    warehouse_dir = get_settings().warehouse_dir
+    result = export_mod.export_tenant_contacts(session, tenant.id, warehouse_dir, fmt=fmt)
+    # Return the object key relative to the warehouse, not the server path.
+    object_key = os.path.relpath(result.path, warehouse_dir)
+    return schemas.ExportResponse(object_key=object_key, n_rows=result.n_rows, format=result.fmt)

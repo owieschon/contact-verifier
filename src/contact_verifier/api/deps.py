@@ -27,6 +27,7 @@ def get_verifier() -> Verifier:
             max_retries=s.dns_max_retries,
             rate_limit_per_s=s.dns_rate_limit_per_s,
             cache_ttl_s=s.verify_cache_ttl_s,
+            cache_maxsize=s.verify_cache_maxsize,
         )
     )
 
