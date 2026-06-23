@@ -98,13 +98,13 @@ src/contact_verifier/
   mcp/server.py     the MCP delivery server
   cli.py            provision / seed / verify / export / serve
 alembic/            migrations (Postgres)
-tests/              30 tests (verification, API, tenancy, dedup, export, MCP)
+tests/              31 tests (verification, API, tenancy, dedup, export, MCP)
 ```
 
 ## Tests
 
 ```bash
-pytest          # 30 tests, no network (the DNS resolver is injected/faked)
+pytest          # 31 tests, no network (the DNS resolver is injected/faked)
 ruff check src tests
 ```
 
