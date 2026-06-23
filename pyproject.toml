@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "contact-verifier"
+version = "0.1.0"
+description = "A small service that ingests, verifies, and serves B2B contact data over a REST API and an MCP server — with per-tenant isolation, retry/rate-limit-aware external calls, and a Parquet delivery export."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "dnspython>=2.6",          # MX/DNS verification (the external dependency)
+    "structlog>=24.1",         # structured JSON logging
+    "pyarrow>=15",             # Parquet delivery export (the warehouse/S3 path)
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0"]              # the MCP delivery server
+sentry = ["sentry-sdk>=2.0"]   # optional error tracing, env-gated
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.4"]
+
+[project.scripts]
+contact-verifier = "contact_verifier.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
