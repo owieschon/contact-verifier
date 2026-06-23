@@ -73,6 +73,20 @@ def test_tenant_isolation(client, provision):
     assert client.get(f"/v1/contacts/{a_id}", headers=_auth(key_a)).status_code == 200
 
 
+def test_ingest_validation_rejects_bad_input(client, provision):
+    key = provision()
+    # empty batch
+    assert client.post("/v1/contacts", headers=_auth(key),
+                       json={"contacts": []}).status_code == 422
+    # oversized batch (cap is 1000)
+    big = {"contacts": [{"email": f"u{i}@good.com"} for i in range(1001)]}
+    assert client.post("/v1/contacts", headers=_auth(key), json=big).status_code == 422
+    # oversized email (cap is 320)
+    long_email = "a" * 330 + "@good.com"
+    assert client.post("/v1/contacts", headers=_auth(key),
+                       json={"contacts": [{"email": long_email}]}).status_code == 422
+
+
 def test_pagination(client, provision):
     key = provision()
     client.post("/v1/contacts", headers=_auth(key), json={"contacts": [

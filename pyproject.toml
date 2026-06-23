@@ -7,6 +7,8 @@ name = "contact-verifier"
 version = "0.1.0"
 description = "A small service that ingests, verifies, and serves B2B contact data over a REST API and an MCP server — with per-tenant isolation, retry/rate-limit-aware external calls, and a Parquet delivery export."
 requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",

@@ -74,23 +74,40 @@ def export_tenant_contacts(
     if fmt not in ("parquet", "csv"):
         raise ValueError(f"unsupported export format: {fmt!r}")
 
-    rows = list(_rows(session, tenant_id))
     stamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%S")
     partition = os.path.join(warehouse_dir, f"tenant={tenant_id}")
     os.makedirs(partition, exist_ok=True)
     path = os.path.join(partition, f"contacts-{stamp}.{fmt}")
 
+    # Stream in batches so memory stays flat regardless of tenant size.
+    n_rows = 0
     if fmt == "parquet":
-        table = pa.Table.from_pylist(rows, schema=_arrow_schema())
-        pq.write_table(table, path)
+        schema = _arrow_schema()
+        with pq.ParquetWriter(path, schema) as writer:
+            for batch in _batched(_rows(session, tenant_id), 500):
+                writer.write_table(pa.Table.from_pylist(batch, schema=schema))
+                n_rows += len(batch)
     else:
         with open(path, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=_COLUMNS)
-            writer.writeheader()
-            writer.writerows(rows)
+            csv_writer = csv.DictWriter(fh, fieldnames=_COLUMNS)
+            csv_writer.writeheader()
+            for row in _rows(session, tenant_id):
+                csv_writer.writerow(row)
+                n_rows += 1
 
-    log.info("export", tenant_id=tenant_id, fmt=fmt, n_rows=len(rows), path=path)
-    return ExportResult(path=path, n_rows=len(rows), fmt=fmt)
+    log.info("export", tenant_id=tenant_id, fmt=fmt, n_rows=n_rows, path=path)
+    return ExportResult(path=path, n_rows=n_rows, fmt=fmt)
+
+
+def _batched(iterable, size: int):
+    batch: list = []
+    for item in iterable:
+        batch.append(item)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
 
 
 def _arrow_schema() -> pa.Schema:

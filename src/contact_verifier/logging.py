@@ -1,8 +1,8 @@
 """Structured logging. JSON in production, human-readable in a dev terminal.
 
-Every log line carries the bound context (request id, tenant id), so a single
-request can be traced end-to-end and a failure diagnosed after the fact without
-spelunking through unstructured text.
+Each log line within a request carries the bound request id (set by the tracing
+middleware), so a single request can be traced end-to-end and a failure diagnosed
+after the fact without spelunking through unstructured text.
 """
 
 from __future__ import annotations
