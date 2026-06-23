@@ -1,0 +1,17 @@
+[
+  {"email": "jane.doe@example.com", "full_name": "Jane Doe", "company": "Example Corp"},
+  {"email": "john.smith@example.org", "full_name": "John Smith", "company": "Example Org"},
+  {"email": "a.patel@wikipedia.org", "full_name": "Asha Patel", "company": "Foundation"},
+  {"email": "m.garcia@github.com", "full_name": "Maria Garcia", "company": "Octo Inc"},
+  {"email": "sales@cloudflare.com", "full_name": null, "company": "Edge Co"},
+  {"email": "info@python.org", "full_name": null, "company": "PSF"},
+  {"email": "DUPLICATE@example.com", "full_name": "Dup One", "company": "Example Corp"},
+  {"email": "duplicate@example.com", "full_name": "Dup Two", "company": "Example Corp"},
+  {"email": "no-at-sign.example.com", "full_name": "Bad Syntax", "company": "Typo LLC"},
+  {"email": "spaces in@example.com", "full_name": "Also Bad", "company": "Typo LLC"},
+  {"email": "ceo@this-domain-does-not-exist-zzqq.invalid", "full_name": "Ghost", "company": "Nowhere"},
+  {"email": "lead@nonexistent-zzqq-domain.example", "full_name": "Phantom", "company": "Void"},
+  {"email": "r.nguyen@mozilla.org", "full_name": "Rosa Nguyen", "company": "Firefox Co"},
+  {"email": "k.kim@apache.org", "full_name": "Kevin Kim", "company": "ASF"},
+  {"email": "ops@debian.org", "full_name": null, "company": "Debian"}
+]

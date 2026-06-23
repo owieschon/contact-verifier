@@ -58,3 +58,9 @@ class VerifyResponse(BaseModel):
 class StatsResponse(BaseModel):
     total: int
     by_status: dict[str, int]
+
+
+class ExportResponse(BaseModel):
+    path: str
+    n_rows: int
+    format: str

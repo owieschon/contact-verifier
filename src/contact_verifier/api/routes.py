@@ -10,9 +10,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 
+from contact_verifier import export as export_mod
 from contact_verifier import services
 from contact_verifier.api import schemas
 from contact_verifier.api.deps import SessionDep, TenantDep, VerifierDep
+from contact_verifier.config import get_settings
 from contact_verifier.db import repository as repo
 from contact_verifier.db.models import EmailStatus
 
@@ -82,3 +84,15 @@ def get_contact(
 def stats(tenant: TenantDep, session: SessionDep) -> schemas.StatsResponse:
     counts = repo.status_counts(session, tenant.id)
     return schemas.StatsResponse(total=sum(counts.values()), by_status=counts)
+
+
+@router.post("/export", response_model=schemas.ExportResponse)
+def export_contacts(
+    tenant: TenantDep,
+    session: SessionDep,
+    fmt: Annotated[str, Query(alias="format", pattern="^(parquet|csv)$")] = "parquet",
+) -> schemas.ExportResponse:
+    result = export_mod.export_tenant_contacts(
+        session, tenant.id, get_settings().warehouse_dir, fmt=fmt
+    )
+    return schemas.ExportResponse(path=result.path, n_rows=result.n_rows, format=result.fmt)
