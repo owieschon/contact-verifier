@@ -1,0 +1,21 @@
+# Optional Postgres, for running the service against Postgres instead of SQLite.
+#   docker compose up -d db
+#   CV_DATABASE_URL=postgresql+psycopg://cv:cv@localhost:5432/contact_verifier alembic upgrade head
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: cv
+      POSTGRES_PASSWORD: cv
+      POSTGRES_DB: contact_verifier
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cv"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+volumes:
+  pgdata:
