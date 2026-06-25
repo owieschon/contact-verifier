@@ -1,113 +1,49 @@
 # contact-verifier
 
-A small service that **ingests B2B contact records, verifies them, and serves the verified
-data** over a REST API, an MCP server, and a warehouse export — with the things that matter
-when you handle other people's data: per-tenant isolation, careful handling of an external
-dependency, and an honest privacy posture.
+Mark a dead email address `valid` and you don't just lose one message — you teach every mailbox provider that your domain sends to addresses that bounce. Sender reputation is the asset, and a confident-but-wrong verdict is what spends it.
 
-> **Status: portfolio prototype.** It runs end-to-end from a clean clone on SQLite with no
-> external services. All sample data is **synthetic** — there is no real contact data, PII,
-> or customer data anywhere in the repo. "Verification" here means email **syntax + DNS/MX
-> deliverability**, not a paid email-validation API.
+So this service refuses to guess. When it checks an email's deliverability and the DNS lookup actually can't confirm the domain, it returns `risky` (confidence `0.5`) — never a false `valid` and never a false `invalid`. A flaky network call doesn't get to author the answer of record. That's the whole posture, and it's the same one I bring to every system I build that handles something I'd have to answer for: the model (or here, an external lookup) proposes at the edges; a deterministic, tested rule decides.
 
-## What it does
+`risky`-on-uncertainty is unit-tested deterministically — the resolver, clock, and sleep are injected, so the fail-closed branch fires in CI with no network and no waiting. And the DNS client knows the difference between "I couldn't reach an answer" (retry, then fail closed) and "the domain does not exist" — `NXDOMAIN` is definitive, returned immediately, never retried.
 
-```
-  ingest (REST / CLI)
-        │
-        ▼
-  verify ── syntax → DNS/MX deliverability → dedup → confidence
-        │        (external call: timeout, retries+backoff, rate limit, cache)
-        ▼
-  store  ── one row per contact, every row scoped to a tenant
-        │        (SQLite by default; Postgres via DATABASE_URL + Alembic)
-        ├──▶ REST API      paginated, API-key auth, tenant-scoped
-        ├──▶ MCP server    the same data as agent tools
-        └──▶ warehouse     Parquet export, tenant=<id>/ partitions (S3 / Snowflake-stage shape)
-```
+## Run it
 
-Each contact is verified to a status — `valid`, `invalid`, `risky`, or `unknown` — with an
-explainable confidence, and later records with the same (normalized) email are flagged as
-duplicates of the canonical one.
-
-## Quick start (about 2 minutes)
+SQLite, no services. Python 3.11+.
 
 ```bash
-pip install -e ".[dev,mcp]"          # Python 3.11+; SQLite, no services needed
+pip install -e ".[dev,mcp]"
 
-# Drive the whole flow from the CLI:
 KEY=$(contact-verifier provision --name "Acme" | awk '/API key/{print $NF}')
 contact-verifier seed   --key "$KEY"     # 15 synthetic sample contacts
 contact-verifier verify --key "$KEY"     # real DNS: valid domains resolve, fakes don't
 contact-verifier export --key "$KEY"     # -> warehouse/tenant=<id>/contacts-*.parquet
 ```
 
-Or run the API and call it over HTTP:
+Or over HTTP — `contact-verifier serve`, then `POST /v1/contacts`, `POST /v1/contacts/verify`, `GET /v1/contacts?status=valid` (OpenAPI at `/docs`). Postgres instead of SQLite: set `CV_DATABASE_URL` and `alembic upgrade head`.
 
-```bash
-contact-verifier serve                   # http://127.0.0.1:8000  (/docs for OpenAPI)
+## What it is
 
-curl -s -X POST localhost:8000/v1/contacts -H "X-API-Key: $KEY" \
-  -H 'content-type: application/json' \
-  -d '{"contacts":[{"email":"jane@example.com"},{"email":"bad-syntax"}]}'
-curl -s -X POST localhost:8000/v1/contacts/verify -H "X-API-Key: $KEY"
-curl -s "localhost:8000/v1/contacts?status=valid" -H "X-API-Key: $KEY"
-```
-
-To use Postgres instead of SQLite: `docker compose up -d db`, then
-`CV_DATABASE_URL=postgresql+psycopg://cv:cv@localhost:5432/contact_verifier alembic upgrade head`
-(install the driver with `pip install -e ".[postgres]"`).
-
-## What to look at (the craft)
-
-- **External-dependency handling** — `verify/dns.py`: per-attempt timeout, bounded
-  exponential backoff + jitter on *transient* failures only (NXDOMAIN is definitive and not
-  retried), a client-side rate limit, and a short-lived cache. Resolver, clock, and sleep are
-  injected, so it's unit-tested with no network (`tests/test_verify.py`).
-- **Tenant isolation** — `db/repository.py`: every query is scoped to a tenant in one place.
-  `tests/test_api.py::test_tenant_isolation` proves one tenant can't read or fetch another's
-  data.
-- **Auth** — API keys are random, prefixed, and stored only as a SHA-256 hash; the plaintext
-  is shown once and never persisted (`auth.py`).
-- **Delivery** — the same verified data is served three ways: REST, MCP (`mcp/server.py`),
-  and a partitioned Parquet export (`export.py`).
-- **Observability** — structured JSON logs with a request id bound through each request, and
-  optional, env-gated Sentry (`observability.py`).
-
-## Security & privacy posture
-
-- Synthetic data only; no real PII or customer data, in the tree or in git history.
-- API keys hashed at rest; secrets read from the environment / a gitignored `.env`.
-- All SQL is parameterized (SQLAlchemy); no string-built queries.
-- Sentry is **off** unless a DSN is set, so error payloads don't leave the box by default.
-- 404 (not 403) for another tenant's record, so the API doesn't reveal that it exists.
-
-## Repository map
+A multi-tenant FastAPI service that ingests B2B contacts, verifies email deliverability (syntax → DNS/MX, no paid API), and serves the verified data three ways from one stored copy:
 
 ```
-src/contact_verifier/
-  app.py            FastAPI application factory
-  config.py         settings (env-driven)
-  auth.py           API-key auth -> tenant
-  observability.py  request tracing + optional Sentry
-  verify/           email syntax + DNS/MX deliverability + the status/confidence engine
-  db/               models, engine/session, the tenant-scoped repository
-  api/              routes + schemas + injectable dependencies
-  services.py       the verify-and-dedup use case
-  export.py         Parquet/CSV warehouse export
-  mcp/server.py     the MCP delivery server
-  cli.py            provision / seed / verify / export / serve
-alembic/            migrations (Postgres)
-tests/              31 tests (verification, API, tenancy, dedup, export, MCP)
+ingest ──▶ verify ──▶ store ──┬──▶ REST      (API-key auth, paginated)
+ REST/CLI  syntax     per-     ├──▶ MCP       (4 tenant-scoped agent tools)
+           DNS/MX     tenant   └──▶ warehouse (Parquet, tenant=<id>/ partitions)
 ```
 
-## Tests
+Two invariants do the load-bearing work, and both are proven by a test rather than asserted in prose:
 
-```bash
-pytest          # 31 tests, no network (the DNS resolver is injected/faked)
-ruff check src tests
-```
+- **Tenant isolation lives in one place.** Every read and write in `db/repository.py` carries a `tenant_id`; handlers get their tenant from the API key and can't reach past it. A cross-tenant fetch returns `404`, not `403`, so the API won't even confirm another tenant's record exists (`tests/test_api.py::test_tenant_isolation`).
+- **Fail-closed verification.** Transient DNS exhaustion → `risky`, never a false verdict (`tests/test_verify.py`).
+
+API keys are random, `cv_`-prefixed, and stored only as a SHA-256 hash (plaintext shown once). Structured JSON logs carry a `request_id` end-to-end; Sentry is optional, env-gated, and `send_default_pii=False`.
+
+## Status
+
+Public, sanitized version of a real system — all sample data is synthetic, generated to protect real people's contact data. Runs end-to-end from a clean clone. **31 tests pass** across 5 files on a Python 3.11/3.12/3.13 CI matrix (ruff + pytest + pip-audit). The Parquet export writes a warehouse *layout* to the local filesystem, not to a live S3/Snowflake stage — see scope notes below.
+
+The DNS retry/backoff/cache design, the storage and migration model, and what's deliberately out of scope are in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ## License
 
-[Apache License 2.0](LICENSE).
+[Apache 2.0](LICENSE).
