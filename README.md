@@ -1,48 +1,83 @@
 # contact-verifier
 
-Mark a dead email address `valid` and you don't just lose one message — you teach every mailbox provider that your domain sends to addresses that bounce. Sender reputation is the asset, and a confident-but-wrong verdict is what spends it.
+You're about to mail 40,000 people and someone hands you a contact list. One address is `j.smith@acme-corp.com` — a typo'd domain that doesn't resolve. If your verifier shrugs and calls it *valid*, you don't just lose one email: it bounces, your bounce rate ticks up, and the mailbox providers that score your sending reputation notice. Enough of those and your *good* mail starts landing in spam. So when the data can't confirm a domain accepts mail, the honest answer isn't to guess — it's to say **risky**, and let the caller decide.
 
-So this service refuses to guess. When it checks an email's deliverability and the DNS lookup actually can't confirm the domain, it returns `risky` (confidence `0.5`) — never a false `valid` and never a false `invalid`. A flaky network call doesn't get to author the answer of record. That's the whole posture, and it's the same one I bring to every system I build that handles something I'd have to answer for: the model (or here, an external lookup) proposes at the edges; a deterministic, tested rule decides.
+**contact-verifier ingests B2B contact records, checks whether each email is actually mailable, and serves the verified data three ways** — a REST API, an [MCP](https://modelcontextprotocol.io) server for agents, and a Parquet warehouse export. It's multi-tenant: many customers' contacts live in one store, and the thing it can't get wrong is letting one tenant see another's data.
 
-`risky`-on-uncertainty is unit-tested deterministically — the resolver, clock, and sleep are injected, so the fail-closed branch fires in CI with no network and no waiting. And the DNS client knows the difference between "I couldn't reach an answer" (retry, then fail closed) and "the domain does not exist" — `NXDOMAIN` is definitive, returned immediately, never retried.
+> Portfolio prototype on synthetic data only — the 15 seed contacts and any tenant you create are made up; no real PII in the tree or git history. "Verification" here means **email syntax + DNS/MX deliverability**, not a paid validation API or live SMTP probing. Defaults to SQLite so it runs end-to-end from a clean clone; point it at Postgres when you want to.
 
-## Run it
+## What "verified" means
 
-SQLite, no services. Python 3.11+.
+Two checks, in order, turned into one status and a one-sentence reason a customer can actually read:
+
+1. **Syntax** (`verify/email.py`) — a pragmatic, network-free parse (one `@`, sane local part, dotted domain with a real TLD) that also lowercases/trims to a `normalized_email` so dedup works. Stricter than RFC 5322 on purpose; it catches the malformed addresses real lists actually contain.
+2. **Deliverability** (`verify/dns.py`) — a DNS **MX** lookup: does the domain advertise mail exchangers at all?
+
+The engine (`verify/engine.py`) collapses those into four statuses:
+
+| status | meaning | confidence |
+|---|---|---|
+| `valid` | syntax ok **and** the domain has MX records | 0.9 |
+| `invalid` | bad syntax, **or** the domain can't receive mail (no MX / NXDOMAIN) | 0.1 |
+| `risky` | syntax ok, but DNS couldn't confirm deliverability *right now* | 0.5 |
+| `unknown` | not yet verified | — |
+
+The load-bearing distinction is between *definitive* and *unconfirmed*. **NXDOMAIN** — the domain provably does not exist — is a real, cached negative, returned immediately; retrying a definitive answer just burns time. But a **timeout or SERVFAIL** is the resolver having a bad moment, not evidence the address is dead. After bounded retries (exponential backoff + jitter) it returns `unknown` → **`risky`**, never a false `invalid`. A DNS hiccup must not silently condemn a good contact, and that fail-closed branch is unit-tested (`tests/test_verify.py`) with an injected resolver, clock, and sleep — it fires in CI with no network and no waiting.
+
+`verify/dns.py` is where the integration craft lives, since the flaky external call is what breaks in production: per-attempt timeout, retry only on transient failures, a client-side rate limit so a bulk run paces itself, and a bounded LRU+TTL cache (the same domains recur all over a contact list).
+
+## Tenant isolation, in one place
+
+Every business row hangs off a `tenant_id`, and **the repository (`db/repository.py`) is the only layer that touches contacts** — by construction it has no method that reads or writes one without a `tenant_id` in the `WHERE` clause. Handlers resolve their tenant from the API key (`auth.py`; keys stored as SHA-256 hashes, plaintext shown once) and pass it down; they can't reach past it because the repository never offers a way to. A cross-tenant fetch returns **404, not 403** (`api/routes.py`), so the API won't even confirm another tenant's record exists — asserted in `tests/test_api.py::test_tenant_isolation`. One enforcement point is the design: isolation you have to remember in every handler is isolation you'll eventually forget.
+
+## The flow
+
+```
+  REST / CLI ──ingest──▶ verify (syntax → MX → status+confidence) ──▶ store ──┐
+                                                                              │
+                                                       SQLite / Postgres,     │
+                                                       tenant-scoped repo  ◀──┘
+                                                              │
+                              ┌───────────────────────────────┼──────────────────────┐
+                              ▼                                ▼                        ▼
+                       REST (FastAPI /v1)              MCP server (stdio)        Parquet export
+                                                       4 agent tools          warehouse/tenant=<id>/
+```
+
+Verification runs inline and is **idempotent** — already-verified contacts are skipped — and the same run flags duplicates (a later contact sharing a `normalized_email` points at the earliest via `duplicate_of_id`). Each run is recorded in `verification_runs`.
+
+**Three serving surfaces, one stored truth:**
+
+- **REST** (`api/routes.py`, prefix `/v1`): `POST /contacts`, `POST /contacts/verify`, `GET /contacts` (paginated, status filter), `GET /contacts/{id}`, `GET /stats`, `POST /export`. Every route requires an `X-API-Key`. OpenAPI at `/docs`.
+- **MCP** (`mcp/server.py`): four tools — `search_contacts`, `get_contact`, `contact_stats`, `verify_contacts` — over stdio for AI agents. The tools take an `api_key` (MCP has no headers) that resolves to a tenant exactly as REST auth does, so an agent only ever sees one tenant. Only `verify_contacts` mutates, and it's idempotent.
+- **Parquet export** (`export.py`): writes a tenant's contacts to `warehouse/tenant=<id>/contacts-<timestamp>.parquet` — the partitioned, columnar shape a data lake or external stage expects (CSV offered for quick inspection). Rows stream in batches so memory stays flat for large tenants.
+
+## Run it (~2 minutes)
 
 ```bash
-pip install -e ".[dev,mcp]"
+pip install -e ".[dev,mcp]"     # or: make install
+make test                       # 31 tests, no DB, no network, no keys
 
-KEY=$(contact-verifier provision --name "Acme" | awk '/API key/{print $NF}')
-contact-verifier seed   --key "$KEY"     # 15 synthetic sample contacts
-contact-verifier verify --key "$KEY"     # real DNS: valid domains resolve, fakes don't
-contact-verifier export --key "$KEY"     # -> warehouse/tenant=<id>/contacts-*.parquet
+# Drive the whole flow from the CLI (SQLite, real DNS):
+contact-verifier provision --name "Acme"     # prints a one-time API key (cv_...)
+contact-verifier seed   --key cv_...          # load 15 synthetic contacts
+contact-verifier verify --key cv_...          # syntax + live MX lookup
+contact-verifier export --key cv_... --format parquet
+contact-verifier serve                        # REST API on :8000
 ```
 
-Or over HTTP — `contact-verifier serve`, then `POST /v1/contacts`, `POST /v1/contacts/verify`, `GET /v1/contacts?status=valid` (OpenAPI at `/docs`). Postgres instead of SQLite: set `CV_DATABASE_URL` and `alembic upgrade head`.
+Or the same over HTTP once `serve` is up:
 
-## What it is
-
-A multi-tenant FastAPI service that ingests B2B contacts, verifies email deliverability (syntax → DNS/MX, no paid API), and serves the verified data three ways from one stored copy:
-
-```
-ingest ──▶ verify ──▶ store ──┬──▶ REST      (API-key auth, paginated)
- REST/CLI  syntax     per-     ├──▶ MCP       (4 tenant-scoped agent tools)
-           DNS/MX     tenant   └──▶ warehouse (Parquet, tenant=<id>/ partitions)
+```bash
+curl -s -X POST localhost:8000/v1/contacts/verify -H "X-API-Key: cv_..."
+curl -s "localhost:8000/v1/contacts?status=risky"  -H "X-API-Key: cv_..."
 ```
 
-Two invariants do the load-bearing work, and both are proven by a test rather than asserted in prose:
-
-- **Tenant isolation lives in one place.** Every read and write in `db/repository.py` carries a `tenant_id`; handlers get their tenant from the API key and can't reach past it. A cross-tenant fetch returns `404`, not `403`, so the API won't even confirm another tenant's record exists (`tests/test_api.py::test_tenant_isolation`).
-- **Fail-closed verification.** Transient DNS exhaustion → `risky`, never a false verdict (`tests/test_verify.py`).
-
-API keys are random, `cv_`-prefixed, and stored only as a SHA-256 hash (plaintext shown once). Structured JSON logs carry a `request_id` end-to-end; Sentry is optional, env-gated, and `send_default_pii=False`.
+The MCP server is `contact-verifier-mcp` (stdio). SQLite is the default; set `CV_DATABASE_URL` to a Postgres DSN and run `alembic upgrade head` (`make db-up` starts one in Docker) to use Postgres. All config is `CV_`-prefixed env vars with working defaults — see `.env.example`.
 
 ## Status
 
-Public, sanitized version of a real system — all sample data is synthetic, generated to protect real people's contact data. Runs end-to-end from a clean clone. **31 tests pass** across 5 files on a Python 3.11/3.12/3.13 CI matrix (ruff + pytest + pip-audit). The Parquet export writes a warehouse *layout* to the local filesystem, not to a live S3/Snowflake stage — see scope notes below.
-
-The DNS retry/backoff/cache design, the storage and migration model, and what's deliberately out of scope are in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+31 tests pass across 5 files on a Python 3.11 / 3.12 / 3.13 CI matrix (ruff + pytest + pip-audit). Synthetic data only; the Parquet export writes a warehouse *layout* to the local filesystem, not to a live S3/Snowflake stage. The DNS retry/backoff/cache design, the storage and migration model, and what's deliberately out of scope live in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ## License
 
