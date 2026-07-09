@@ -1,7 +1,5 @@
 # contact-verifier
 
-You're about to mail 40,000 people and someone hands you a contact list. One address is `j.smith@acme-corp.com` — a typo'd domain that doesn't resolve. If your verifier shrugs and calls it *valid*, you don't just lose one email: it bounces, your bounce rate ticks up, and the mailbox providers that score your sending reputation notice. Enough of those and your *good* mail starts landing in spam. So when the data can't confirm a domain accepts mail, the honest answer isn't to guess — it's to say **risky**, and let the caller decide.
-
 **contact-verifier ingests B2B contact records, checks whether each email is actually mailable, and serves the verified data three ways** — a REST API, an [MCP](https://modelcontextprotocol.io) server for agents, and a Parquet warehouse export. It's multi-tenant: many customers' contacts live in one store, and the thing it can't get wrong is letting one tenant see another's data.
 
 > Portfolio prototype on synthetic data only — the 15 seed contacts and any tenant you create are made up; no real PII in the tree or git history. "Verification" here means **email syntax + DNS/MX deliverability**, not a paid validation API or live SMTP probing. Defaults to SQLite so it runs end-to-end from a clean clone; point it at Postgres when you want to.
