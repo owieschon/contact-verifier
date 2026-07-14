@@ -34,7 +34,9 @@ def _tenant_id(session, api_key: str) -> str:
 def _contact_dict(c) -> dict:
     return {
         "id": c.id, "email": c.email, "full_name": c.full_name, "company": c.company,
-        "domain": c.domain, "status": c.status.value, "confidence": c.confidence,
+        "domain": c.domain, "status": c.status.value,
+        "heuristic_score": c.heuristic_score,
+        "mail_routing_state": c.mail_routing_state,
         "duplicate_of_id": c.duplicate_of_id,
     }
 

@@ -22,10 +22,10 @@ from contact_verifier.verify.engine import Verifier
 _NO_MX_DOMAINS = {"nope.invalid", "ghost.example"}
 
 
-def _fake_resolve(domain: str):
+def _fake_resolve(domain: str, rdtype: str):
     if domain in _NO_MX_DOMAINS:
         raise dns.resolver.NXDOMAIN()
-    return ["mx1." + domain]
+    return ["mx1." + domain] if rdtype == "MX" else []
 
 
 @pytest.fixture

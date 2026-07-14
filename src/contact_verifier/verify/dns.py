@@ -22,6 +22,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 
 import dns.exception
 import dns.resolver
@@ -30,24 +31,29 @@ from contact_verifier.logging import get_logger
 
 log = get_logger()
 
-# True/False = decided; None = couldn't determine (transient failures exhausted).
-MxResult = bool | None
+class MailRoutingState(StrEnum):
+    MX = "mx"
+    IMPLICIT_MX = "implicit_mx"
+    NULL_MX = "null_mx"
+    NXDOMAIN = "nxdomain"
+    NO_ADDRESS = "no_address"
+    TRANSIENT = "transient"
 
 
-def _default_resolver(timeout_s: float) -> Callable[[str], object]:
+def _default_resolver(timeout_s: float) -> Callable[[str, str], object]:
     resolver = dns.resolver.Resolver()
     resolver.timeout = timeout_s
     resolver.lifetime = timeout_s
 
-    def resolve(domain: str) -> object:
-        return resolver.resolve(domain, "MX")
+    def resolve(domain: str, rdtype: str) -> object:
+        return resolver.resolve(domain, rdtype)
 
     return resolve
 
 
 @dataclass
 class _CacheEntry:
-    value: MxResult
+    value: MailRoutingState
     expires_at: float
 
 
@@ -61,7 +67,7 @@ class MxChecker:
         backoff_base_s: float = 0.1,
         cache_ttl_s: int = 3600,
         cache_maxsize: int = 10_000,
-        resolve_fn: Callable[[str], object] | None = None,
+        resolve_fn: Callable[[str, str], object] | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -78,15 +84,15 @@ class MxChecker:
         self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
         self._last_call_at = 0.0
 
-    def has_mx(self, domain: str) -> MxResult:
+    def routing_state(self, domain: str) -> MailRoutingState:
         cached = self._cache.get(domain)
         if cached is not None and cached.expires_at > self._clock():
             self._cache.move_to_end(domain)  # mark recently used
             return cached.value
 
         result = self._lookup_with_retries(domain)
-        # Cache decided answers; don't cache "unknown" so a later call can retry.
-        if result is not None:
+        # Transient failures are not cached so a later request can retry.
+        if result is not MailRoutingState.TRANSIENT:
             self._cache[domain] = _CacheEntry(
                 value=result, expires_at=self._clock() + self._cache_ttl
             )
@@ -95,23 +101,43 @@ class MxChecker:
                 self._cache.popitem(last=False)  # evict least-recently-used
         return result
 
-    def _lookup_with_retries(self, domain: str) -> MxResult:
+    def _lookup_with_retries(self, domain: str) -> MailRoutingState:
         for attempt in range(self._max_retries + 1):
             self._respect_rate_limit()
             try:
-                answers = self._resolve(domain)
-                return bool(list(answers))  # MX records present and non-empty
+                return self._lookup_once(domain)
             except dns.resolver.NXDOMAIN:
-                return False                # domain does not exist: definitive
-            except dns.resolver.NoAnswer:
-                return False                # exists but advertises no MX
+                return MailRoutingState.NXDOMAIN
             except (dns.exception.Timeout, dns.resolver.NoNameservers) as exc:
                 if attempt >= self._max_retries:
                     log.warning("mx_lookup_exhausted", domain=domain, error=str(exc))
-                    return None             # transient, retries exhausted: unknown
+                    return MailRoutingState.TRANSIENT
                 backoff = (2 ** attempt) * self._backoff_base + random.uniform(0, 0.05)
                 self._sleep(backoff)
-        return None
+        return MailRoutingState.TRANSIENT
+
+    def _lookup_once(self, domain: str) -> MailRoutingState:
+        try:
+            answers = list(self._resolve(domain, "MX"))
+        except dns.resolver.NoAnswer:
+            return self._implicit_mx_state(domain)
+        if any(
+            str(getattr(answer, "exchange", "")).strip() == "."
+            for answer in answers
+        ):
+            return MailRoutingState.NULL_MX
+        if answers:
+            return MailRoutingState.MX
+        return self._implicit_mx_state(domain)
+
+    def _implicit_mx_state(self, domain: str) -> MailRoutingState:
+        for rdtype in ("A", "AAAA"):
+            try:
+                if list(self._resolve(domain, rdtype)):
+                    return MailRoutingState.IMPLICIT_MX
+            except dns.resolver.NoAnswer:
+                continue
+        return MailRoutingState.NO_ADDRESS
 
     def _respect_rate_limit(self) -> None:
         if self._min_interval <= 0:

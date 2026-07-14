@@ -1,26 +1,28 @@
 # contact-verifier
 
 <!-- clean-docs:purpose -->
-**contact-verifier ingests B2B contact records, checks whether each email is actually mailable, and serves the verified data three ways** — a REST API, an [MCP](https://modelcontextprotocol.io) server for agents, and a Parquet warehouse export. It's multi-tenant: many customers' contacts live in one store, and the thing it can't get wrong is letting one tenant see another's data.
+**contact-verifier ingests B2B contact records, checks email syntax and whether each domain publishes a usable mail-routing path, and serves the results three ways** — a REST API, an [MCP](https://modelcontextprotocol.io) server for agents, and a Parquet warehouse export. It does not prove that a mailbox exists or will accept a message. It's multi-tenant: many customers' contacts live in one store, and the thing it can't get wrong is letting one tenant see another's data.
 <!-- clean-docs:end purpose -->
 
 
-> Portfolio prototype on synthetic data only — the 15 seed contacts and any tenant you create are made up; no real PII in the tree or git history. "Verification" here means **email syntax + DNS/MX deliverability**, not a paid validation API or live SMTP probing. Defaults to SQLite so it runs end-to-end from a clean clone; point it at Postgres when you want to.
+> Portfolio prototype on synthetic data only — the 15 seed contacts and any tenant you create are made up; no real PII in the tree or git history. "Verification" here means **email syntax + DNS mail-routing evidence**, not mailbox validation or live SMTP probing. Defaults to SQLite so it runs end-to-end from a clean clone; point it at Postgres when you want to.
 
 ## What "verified" means
 
 Two checks, in order, turned into one status and a one-sentence reason a customer can actually read:
 
 1. **Syntax** (`verify/email.py`) — a pragmatic, network-free parse (one `@`, sane local part, dotted domain with a real TLD) that also lowercases/trims to a `normalized_email` so dedup works. Stricter than RFC 5322 on purpose; it catches the malformed addresses real lists actually contain.
-2. **Deliverability** (`verify/dns.py`) — a DNS **MX** lookup: does the domain advertise mail exchangers at all?
+2. **Routing evidence** (`verify/dns.py`) — classify explicit MX, implicit MX through A/AAAA, null MX, nonexistent domains, missing address records, and transient DNS failure.
 
 The engine (`verify/engine.py`) collapses those into four statuses:
 
-| status | meaning | confidence |
+| status | meaning | heuristic score |
 |---|---|---|
-| `valid` | syntax ok **and** the domain has MX records | 0.9 |
-| `invalid` | bad syntax, **or** the domain can't receive mail (no MX / NXDOMAIN) | 0.1 |
-| `risky` | syntax ok, but DNS couldn't confirm deliverability *right now* | 0.5 |
+| `valid` | syntax ok and DNS exposes an explicit or implicit mail route | 0.9 |
+| `invalid` | bad syntax, null MX, NXDOMAIN, or no MX/A/AAAA route | 0.0 or 0.1 |
+| `risky` | syntax ok, but a temporary DNS failure prevented classification | 0.5 |
+
+These values are ordinal rule constants named `heuristic_score`; they are not calibrated probabilities.
 | `unknown` | not yet verified | — |
 
 The load-bearing distinction is between *definitive* and *unconfirmed*. **NXDOMAIN** — the domain provably does not exist — is a real, cached negative, returned immediately; retrying a definitive answer just burns time. But a **timeout or SERVFAIL** is the resolver having a bad moment, not evidence the address is dead. After bounded retries (exponential backoff + jitter) it returns `unknown` → **`risky`**, never a false `invalid`. A DNS hiccup must not silently condemn a good contact, and that fail-closed branch is unit-tested (`tests/test_verify.py`) with an injected resolver, clock, and sleep — it fires in CI with no network and no waiting.
@@ -34,7 +36,7 @@ Every business row hangs off a `tenant_id`, and **the repository (`db/repository
 ## The flow
 
 ```
-  REST / CLI ──ingest──▶ verify (syntax → MX → status+confidence) ──▶ store ──┐
+  REST / CLI ──ingest──▶ verify (syntax → routing state → status+score) ──▶ store ──┐
                                                                               │
                                                        SQLite / Postgres,     │
                                                        tenant-scoped repo  ◀──┘
