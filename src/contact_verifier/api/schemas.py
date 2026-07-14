@@ -34,8 +34,8 @@ class ContactOut(BaseModel):
     company: str | None
     domain: str | None
     status: EmailStatus
-    confidence: float
-    domain_has_mx: bool | None
+    heuristic_score: float
+    mail_routing_state: str | None
     duplicate_of_id: str | None
     verified_at: datetime | None
     created_at: datetime

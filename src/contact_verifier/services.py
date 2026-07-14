@@ -35,9 +35,11 @@ def verify_tenant_contacts(
         contact.normalized_email = result.normalized_email
         contact.domain = result.domain
         contact.email_syntax_ok = result.syntax_ok
-        contact.domain_has_mx = result.domain_has_mx
+        contact.mail_routing_state = (
+            result.mail_routing_state.value if result.mail_routing_state else None
+        )
         contact.status = result.status
-        contact.confidence = result.confidence
+        contact.heuristic_score = result.heuristic_score
         contact.verified_at = datetime.now(UTC)
         n_verified += 1
 

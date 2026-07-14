@@ -26,7 +26,7 @@ log = get_logger()
 
 _COLUMNS = [
     "id", "email", "normalized_email", "full_name", "company", "domain",
-    "status", "confidence", "domain_has_mx", "duplicate_of_id",
+    "status", "heuristic_score", "mail_routing_state", "duplicate_of_id",
     "verified_at", "created_at",
 ]
 
@@ -56,8 +56,8 @@ def _rows(session: Session, tenant_id: str):
             "company": contact.company,
             "domain": contact.domain,
             "status": contact.status.value,
-            "confidence": contact.confidence,
-            "domain_has_mx": contact.domain_has_mx,
+            "heuristic_score": contact.heuristic_score,
+            "mail_routing_state": contact.mail_routing_state,
             "duplicate_of_id": contact.duplicate_of_id,
             "verified_at": contact.verified_at.isoformat() if contact.verified_at else None,
             "created_at": contact.created_at.isoformat(),
@@ -115,7 +115,7 @@ def _arrow_schema() -> pa.Schema:
     return pa.schema([
         ("id", pa.string()), ("email", pa.string()), ("normalized_email", pa.string()),
         ("full_name", pa.string()), ("company", pa.string()), ("domain", pa.string()),
-        ("status", pa.string()), ("confidence", pa.float64()),
-        ("domain_has_mx", pa.bool_()), ("duplicate_of_id", pa.string()),
+        ("status", pa.string()), ("heuristic_score", pa.float64()),
+        ("mail_routing_state", pa.string()), ("duplicate_of_id", pa.string()),
         ("verified_at", pa.string()), ("created_at", pa.string()),
     ])

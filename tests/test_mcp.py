@@ -15,10 +15,10 @@ from contact_verifier.verify.dns import MxChecker
 from contact_verifier.verify.engine import Verifier
 
 
-def _fake_resolve(domain):
+def _fake_resolve(domain, rdtype):
     if domain == "nope.invalid":
         raise dns.resolver.NXDOMAIN()
-    return ["mx1." + domain]
+    return ["mx1." + domain] if rdtype == "MX" else []
 
 
 @pytest.fixture

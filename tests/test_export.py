@@ -25,7 +25,9 @@ def test_parquet_export_is_partitioned_and_tenant_scoped(session_factory, tmp_pa
     assert f"tenant={a}" in result.path and result.path.endswith(".parquet")
     table = pq.read_table(result.path)
     assert table.num_rows == 2
-    assert set(table.column_names) >= {"email", "status", "confidence", "domain"}
+    assert set(table.column_names) >= {
+        "email", "status", "heuristic_score", "mail_routing_state", "domain"
+    }
 
     # B's data is not in A's export.
     with session_factory() as s:

@@ -38,7 +38,7 @@ class EmailStatus(enum.StrEnum):
     UNKNOWN = "unknown"      # not yet verified
     VALID = "valid"          # syntax ok and domain has mail exchangers
     INVALID = "invalid"      # bad syntax, or domain cannot receive mail
-    RISKY = "risky"          # deliverable domain but a low-confidence signal
+    RISKY = "risky"          # syntax valid but routing evidence is transient
 
 
 class Tenant(Base):
@@ -88,13 +88,13 @@ class Contact(Base):
     normalized_email: Mapped[str] = mapped_column(String(320), nullable=False)
     domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
     email_syntax_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    domain_has_mx: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    mail_routing_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[EmailStatus] = mapped_column(
         Enum(EmailStatus, native_enum=False,
              values_callable=lambda e: [m.value for m in e]),
         default=EmailStatus.UNKNOWN,
     )
-    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    heuristic_score: Mapped[float] = mapped_column(Float, default=0.0)
     duplicate_of_id: Mapped[str | None] = mapped_column(
         ForeignKey("contacts.id"), nullable=True
     )

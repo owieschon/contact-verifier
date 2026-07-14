@@ -1,7 +1,6 @@
-"""Turn the raw checks into a business verdict: status + confidence.
+"""Turn raw checks into a business verdict and an ordinal evidence state.
 
-Confidence is a deliberately simple, explainable rule, not a model — a customer
-asking "why is this contact 0.5?" gets a one-sentence answer.
+The heuristic score is a rule constant, not a calibrated probability.
 """
 
 from __future__ import annotations
@@ -10,7 +9,7 @@ from dataclasses import dataclass
 
 from contact_verifier.db.models import EmailStatus
 from contact_verifier.verify import email as email_mod
-from contact_verifier.verify.dns import MxChecker
+from contact_verifier.verify.dns import MailRoutingState, MxChecker
 
 
 @dataclass(frozen=True)
@@ -18,9 +17,9 @@ class VerificationResult:
     normalized_email: str
     domain: str | None
     syntax_ok: bool
-    domain_has_mx: bool | None
+    mail_routing_state: MailRoutingState | None
     status: EmailStatus
-    confidence: float
+    heuristic_score: float
     reason: str
 
 
@@ -33,25 +32,29 @@ class Verifier:
         if not parsed.syntax_ok:
             return VerificationResult(
                 normalized_email=parsed.normalized, domain=None, syntax_ok=False,
-                domain_has_mx=None, status=EmailStatus.INVALID, confidence=0.0,
+                mail_routing_state=None, status=EmailStatus.INVALID, heuristic_score=0.0,
                 reason="malformed email address",
             )
 
-        has_mx = self._mx.has_mx(parsed.domain)
-        if has_mx is True:
-            status, confidence, reason = (
-                EmailStatus.VALID, 0.9, "syntax ok and domain accepts mail (MX present)"
+        routing = self._mx.routing_state(parsed.domain)
+        if routing in {MailRoutingState.MX, MailRoutingState.IMPLICIT_MX}:
+            status, score, reason = (
+                EmailStatus.VALID, 0.9, f"syntax ok and usable mail route found ({routing.value})"
             )
-        elif has_mx is False:
-            status, confidence, reason = (
-                EmailStatus.INVALID, 0.1, "domain cannot receive mail (no MX / NXDOMAIN)"
+        elif routing in {
+            MailRoutingState.NULL_MX,
+            MailRoutingState.NXDOMAIN,
+            MailRoutingState.NO_ADDRESS,
+        }:
+            status, score, reason = (
+                EmailStatus.INVALID, 0.1, f"domain has no usable mail route ({routing.value})"
             )
-        else:  # None: transient DNS failure, couldn't confirm
-            status, confidence, reason = (
+        else:
+            status, score, reason = (
                 EmailStatus.RISKY, 0.5, "syntax ok but domain deliverability unconfirmed"
             )
 
         return VerificationResult(
             normalized_email=parsed.normalized, domain=parsed.domain, syntax_ok=True,
-            domain_has_mx=has_mx, status=status, confidence=confidence, reason=reason,
+            mail_routing_state=routing, status=status, heuristic_score=score, reason=reason,
         )
