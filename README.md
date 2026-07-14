@@ -1,6 +1,9 @@
 # contact-verifier
 
-**contact-verifier ingests B2B contact records, checks whether each email is actually mailable, and serves the verified data three ways** — a REST API, an [MCP](https://modelcontextprotocol.io) server for agents, and a Parquet warehouse export. It's multi-tenant: many customers' contacts live in one store, and the thing it can't get wrong is letting one tenant see another's data.
+<!-- clean-docs:purpose -->
+**contact-verifier ingests B2B contact records, checks whether each email is actually mailable, and serves the verified data three ways** — a REST API, an [MCP](https://modelcontextprotocol.io) server for agents, and a Parquet warehouse export. It's multi-tenant: many customers' contacts live in one store, and the thing it can't get wrong is letting one tenant see another's data. Read this page before changing or relying on contact-verifier so you can preserve its documented constraints and verify the result against the repository.
+<!-- clean-docs:end purpose -->
+
 
 > Portfolio prototype on synthetic data only — the 15 seed contacts and any tenant you create are made up; no real PII in the tree or git history. "Verification" here means **email syntax + DNS/MX deliverability**, not a paid validation API or live SMTP probing. Defaults to SQLite so it runs end-to-end from a clean clone; point it at Postgres when you want to.
 
@@ -56,7 +59,7 @@ Verification runs inline and is **idempotent** — already-verified contacts are
 pip install -e ".[dev,mcp]"     # or: make install
 make test                       # 31 tests, no DB, no network, no keys
 
-# Drive the whole flow from the CLI (SQLite, real DNS):
+## Drive the whole flow from the CLI (SQLite, real DNS):
 contact-verifier provision --name "Acme"     # prints a one-time API key (cv_...)
 contact-verifier seed   --key cv_...          # load 15 synthetic contacts
 contact-verifier verify --key cv_...          # syntax + live MX lookup

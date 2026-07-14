@@ -1,7 +1,9 @@
 # Architecture
 
-The shape is a small data service: **ingest → verify → store → serve**, with one external
-dependency (DNS) handled defensively and every row scoped to a tenant.
+<!-- clean-docs:purpose -->
+The shape is a small data service: **ingest → verify → store → serve**, with one external dependency (DNS) handled defensively and every row scoped to a tenant. Read this page before changing or relying on Architecture so you can preserve its documented constraints and verify the result against the repository.
+<!-- clean-docs:end purpose -->
+
 
 ```
    REST / CLI ──ingest──┐
