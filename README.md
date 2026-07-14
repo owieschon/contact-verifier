@@ -1,7 +1,7 @@
 # contact-verifier
 
 <!-- clean-docs:purpose -->
-**contact-verifier ingests B2B contact records, checks whether each email is actually mailable, and serves the verified data three ways** — a REST API, an [MCP](https://modelcontextprotocol.io) server for agents, and a Parquet warehouse export. It's multi-tenant: many customers' contacts live in one store, and the thing it can't get wrong is letting one tenant see another's data. Read this page before changing or relying on contact-verifier so you can preserve its documented constraints and verify the result against the repository.
+**contact-verifier ingests B2B contact records, checks whether each email is actually mailable, and serves the verified data three ways** — a REST API, an [MCP](https://modelcontextprotocol.io) server for agents, and a Parquet warehouse export. It's multi-tenant: many customers' contacts live in one store, and the thing it can't get wrong is letting one tenant see another's data.
 <!-- clean-docs:end purpose -->
 
 
