@@ -1,15 +1,14 @@
-"""Domain deliverability via DNS MX lookup — the service's external dependency.
+"""Collect domain mail-routing evidence through bounded DNS lookups.
 
-This is where the integration craft lives. A network call to a flaky external
-system gets:
+A network call to a flaky external system gets:
   - a per-attempt timeout, so one slow resolver can't hang a request;
   - bounded retries with exponential backoff + jitter on *transient* failures
     (timeout, SERVFAIL) but not on definitive ones (NXDOMAIN means the domain
-    does not exist — retrying is pointless);
+    does not exist, so retrying is pointless);
   - a client-side rate limit, so a bulk verify run doesn't hammer the resolver;
   - a short-lived, size-bounded (LRU) cache, because the same domains recur
     constantly in a contact list and their MX records don't change between
-    requests — bounded so a long-lived process can't grow it without limit.
+    requests, bounded so a long-lived process cannot grow it without limit.
 
 The resolver and the clock/sleep are injected so the whole thing is unit-testable
 with no network and no real waiting.

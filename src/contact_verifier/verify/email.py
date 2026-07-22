@@ -1,8 +1,8 @@
 """Email syntax validation and normalization.
 
 Deliberately pragmatic, not a full RFC 5322 parser: it catches the malformed
-addresses that show up in real contact lists (missing @, spaces, no TLD, double
-dots) and normalizes for deduplication. Domain-level deliverability is a separate
+addresses that show up in contact lists (missing @, spaces, no TLD, double
+dots) and normalizes for deduplication. Domain-level DNS evidence is a separate
 check (`dns.py`); this module never touches the network.
 """
 

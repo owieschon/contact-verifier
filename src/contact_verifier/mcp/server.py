@@ -1,10 +1,14 @@
-"""MCP server — the same verified data, delivered as agent tools.
+"""Serve the same syntax and DNS assessment through tenant-scoped MCP tools.
 
 Exposes read-mostly, tenant-scoped tools over stdio so an AI agent (or any MCP
-client) can search and fetch verified contacts. The tools take an `api_key`
-because MCP has no HTTP headers; the key resolves to a tenant exactly as the REST
-auth does, so an agent can only ever see one tenant's data. Verification is the
-only state-changing tool, and it is idempotent.
+client) can search and fetch assessed contacts. The tools take an `api_key`
+because this stdio transport does not carry the REST authentication header; the
+key resolves to a tenant exactly as the REST auth does, so an agent can only ever
+see one tenant's data. Verification is the only state-changing tool, and it is
+idempotent.
+
+The status values classify syntax and DNS evidence. ``heuristic_score`` is an
+ordinal rule score, not mailbox-existence or delivery probability.
 """
 
 from __future__ import annotations
@@ -43,7 +47,8 @@ def _contact_dict(c) -> dict:
 
 def search_contacts(api_key: str, status: str | None = None, limit: int = 25) -> list[dict]:
     """Search a tenant's contacts, optionally filtered by status
-    (valid/invalid/risky/unknown). Returns up to `limit` rows."""
+    (valid/invalid/risky/unknown). These are syntax/DNS rule outcomes, not
+    mailbox-validity claims. Returns up to `limit` rows."""
     status_enum = EmailStatus(status) if status else None
     with SessionLocal() as s:
         tenant_id = _tenant_id(s, api_key)

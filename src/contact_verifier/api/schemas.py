@@ -33,9 +33,18 @@ class ContactOut(BaseModel):
     full_name: str | None
     company: str | None
     domain: str | None
-    status: EmailStatus
-    heuristic_score: float
-    mail_routing_state: str | None
+    status: EmailStatus = Field(
+        description=(
+            "Compatibility rule outcome over syntax and DNS routing evidence; "
+            "not mailbox validity"
+        )
+    )
+    heuristic_score: float = Field(
+        description="Ordinal rule score; not mailbox-existence or delivery probability"
+    )
+    mail_routing_state: str | None = Field(
+        description="Observed DNS routing state, or null before assessment"
+    )
     duplicate_of_id: str | None
     verified_at: datetime | None
     created_at: datetime

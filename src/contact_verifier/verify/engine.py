@@ -1,6 +1,7 @@
-"""Turn raw checks into a business verdict and an ordinal evidence state.
+"""Turn syntax and DNS evidence into a compatibility status and rule score.
 
-The heuristic score is a rule constant, not a calibrated probability.
+The score is an explainable rule constant, not a calibrated probability.
+Neither field claims that a mailbox exists or will accept a message.
 """
 
 from __future__ import annotations
@@ -39,7 +40,9 @@ class Verifier:
         routing = self._mx.routing_state(parsed.domain)
         if routing in {MailRoutingState.MX, MailRoutingState.IMPLICIT_MX}:
             status, score, reason = (
-                EmailStatus.VALID, 0.9, f"syntax ok and usable mail route found ({routing.value})"
+                EmailStatus.VALID,
+                0.9,
+                f"syntax passed and usable DNS mail route found ({routing.value})",
             )
         elif routing in {
             MailRoutingState.NULL_MX,
@@ -47,11 +50,11 @@ class Verifier:
             MailRoutingState.NO_ADDRESS,
         }:
             status, score, reason = (
-                EmailStatus.INVALID, 0.1, f"domain has no usable mail route ({routing.value})"
+                EmailStatus.INVALID, 0.1, f"domain has no usable DNS mail route ({routing.value})"
             )
         else:
             status, score, reason = (
-                EmailStatus.RISKY, 0.5, "syntax ok but domain deliverability unconfirmed"
+                EmailStatus.RISKY, 0.5, "syntax passed but DNS routing evidence stayed transient"
             )
 
         return VerificationResult(
