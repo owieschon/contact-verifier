@@ -1,93 +1,72 @@
 # Architecture
 
-<!-- clean-docs:purpose -->
-The shape is a small data service: **ingest → verify → store → serve**, with one external dependency (DNS) handled defensively and every row scoped to a tenant.
-<!-- clean-docs:end purpose -->
+<!-- sourcebound:purpose -->
+Use this page to trace one tenant-scoped contact from ingestion to an explainable syntax and DNS result, then through each serving boundary. It identifies where external calls, tenant isolation, and local side effects occur.
+<!-- sourcebound:end purpose -->
 
+```mermaid
+flowchart TB
+    accTitle: Contact assessment data flow
+    accDescr: REST and CLI ingestion send tenant contacts to a verifier that uses bounded DNS calls. Tenant-scoped storage then serves the same records through REST, stdio MCP tools, and local exports.
+    A["REST or CLI ingestion"] --> B["Verification engine"]
+    D["DNS resolver<br/>timeout, retry, rate limit, cache"] --> B
+    B --> C["Tenant-scoped storage<br/>SQLite or Postgres"]
+    C --> E["REST API"]
+    C --> F["stdio MCP tools"]
+    C --> G["Local Parquet or CSV export"]
+```
 
-```
-   REST / CLI ──ingest──┐
-                        ▼
-                   ┌─────────┐     external: DNS/MX
-                   │ verify  │◀── (timeout, retries+backoff,
-                   │ engine  │     rate limit, cache)
-                   └────┬────┘
-        syntax → deliverability → dedup → status + confidence
-                        ▼
-                   ┌─────────┐
-                   │ storage │  SQLite (default) / Postgres
-                   │ (per-   │  models + tenant-scoped repository
-                   │ tenant) │
-                   └────┬────┘
-            ┌───────────┼─────────────┐
-            ▼           ▼             ▼
-          REST        MCP server   warehouse export
-        (FastAPI)   (agent tools)  (Parquet, tenant=<id>/)
-```
+Diagram: REST or CLI ingestion sends a tenant's contacts through syntax checks and bounded DNS
+lookups, then into tenant-scoped storage. REST, stdio MCP tools, and local exports read the same
+stored records.
 
 ## Layers
 
-- **`api/`** — FastAPI routes and Pydantic schemas. Handlers are thin: validate input, call a
-  service or the repository, shape the response. Dependencies (`session`, `tenant`,
-  `verifier`) are injected with `Annotated[...]` so the network-touching pieces can be
-  swapped in tests.
-- **`services.py`** — use-cases (currently: verify-a-tenant's-contacts-and-flag-duplicates),
-  callable identically from HTTP, the CLI, or a test.
-- **`db/`** — the data model and **the one place tenant isolation is enforced**. The
-  repository has no method that reads or writes a contact without a `tenant_id` in the WHERE
-  clause; handlers get their tenant from the API key and can't reach past it. All SQL is
-  parameterized by SQLAlchemy.
-- **`verify/`** — pure, network-free syntax/normalization (`email.py`), the defensive DNS/MX
-  client (`dns.py`), and the engine that turns the checks into a status + confidence
-  (`engine.py`).
-- **`export.py` / `mcp/`** — two more delivery surfaces over the same stored data.
+- **`api/`** validates input, resolves the tenant, invokes a service or repository method, and
+  shapes the response. Injectable sessions and verifiers keep network work out of tests.
+- **`services.py`** owns the verify-and-deduplicate use case shared by HTTP, CLI, and MCP callers.
+- **`db/`** owns the models and tenant-scoped repository. No contact query omits a tenant ID.
+- **`verify/`** normalizes syntax, gathers DNS routing evidence, and maps that evidence to a
+  compatibility status and ordinal rule score.
+- **`export.py` and `mcp/`** expose stored records through local export and stdio tool boundaries.
 
-## The external dependency (the interesting part)
+## DNS boundary
 
-`verify/dns.py` is where most of the integration judgment lives, because a network call to a
-flaky external system is exactly what breaks in production:
+`verify/dns.py` is the only external call in the verification path. The client contains four
+failure controls:
 
-- **Timeout** per attempt — one slow resolver can't hang a request.
-- **Retries with exponential backoff + jitter**, but only on *transient* failures (timeout,
-  SERVFAIL). `NXDOMAIN` means the domain does not exist, so it's returned immediately —
-  retrying a definitive answer just wastes time and quota.
-- **Client-side rate limit** — a bulk verify run paces itself instead of hammering the
-  resolver.
-- **Short-lived cache** — the same domains recur constantly across a contact list and their
-  MX records don't change between requests.
-- The resolver, clock, and sleep are **injected**, so all of this is unit-tested
-  deterministically with no network and no real waiting.
+- A timeout bounds each attempt.
+- Exponential backoff and jitter retry only transient timeouts and resolver failures. `NXDOMAIN`
+  returns immediately because retrying a definitive answer changes nothing.
+- A client-side rate limit paces a bulk assessment.
+- A size-bounded LRU cache keeps repeated domain lookups finite. Transient failures are not cached.
 
-A transient failure that exhausts retries returns `unknown` (→ status `risky`) rather than a
-false negative, so a DNS hiccup never silently marks a good contact as undeliverable.
+No MX answer triggers A and AAAA lookups because SMTP permits an implicit route through the address
+record. Null MX, `NXDOMAIN`, and a domain with no MX/A/AAAA route are definitive negative states.
+A transient failure remains `transient` and maps to `risky`; the service does not turn resolver
+uncertainty into a mailbox claim.
 
-## Storage and migrations
+## Storage and tenant isolation
 
-SQLAlchemy 2.0 models. SQLite is the default so the service runs with no external services;
-set `CV_DATABASE_URL` to a Postgres DSN to use Postgres. Schema changes are managed by
-Alembic (`alembic upgrade head`); the SQLite demo path also supports `create_all` for a
-zero-config start. Indexes cover the hot paths: list/search a tenant's contacts, and dedup
-within a tenant by normalized email.
+SQLite is the default; `CV_DATABASE_URL` can select Postgres. Alembic owns schema migrations, while
+the local SQLite path supports `create_all` for a service-free start. Indexes cover tenant listing
+and tenant-local normalized-email deduplication.
 
-## Security & privacy
+API keys resolve to one tenant. Every repository method includes that tenant in its query. REST
+returns 404 for another tenant's contact. A separate MCP negative test proves that one tenant's key
+cannot list or fetch another tenant's contact while the owning key can.
 
-- **Tenancy:** API key → tenant; every query is tenant-scoped; a cross-tenant fetch returns
-  404, not 403, so the API doesn't confirm another tenant's record exists.
-- **Secrets:** API keys are stored only as a SHA-256 hash; the plaintext is shown once.
-  Configuration and any DSNs come from the environment / a gitignored `.env`.
-- **Data:** synthetic only — no real contact data or PII in the tree or in git history.
-- **Error reporting:** Sentry is off unless a DSN is set, and is configured with
-  `send_default_pii=False`, so contact data isn't shipped to an error backend.
+## Security and privacy
 
-## Observability
+- API keys are random and stored only as SHA-256 hashes; plaintext appears once.
+- Configuration and DSNs come from the environment or a gitignored `.env` file.
+- Committed fixtures use synthetic contacts; local operator data stays outside version control.
+- SQLAlchemy parameterizes database queries.
+- Sentry is disabled unless a DSN is configured and uses `send_default_pii=False`.
 
-Structured JSON logs (`structlog`), with a request id generated per request, bound into the
-log context for the life of the request, and echoed back in an `x-request-id` response
-header — so one request is greppable end-to-end. Sentry is wired but optional and env-gated.
+## Declared limits
 
-## What's deliberately out of scope
-
-This is a focused portfolio artifact, not a product. No background workers/queue (verify runs
-inline), no real third-party enrichment API (DNS/MX is the external call), no auth beyond API
-keys, and the warehouse export writes to the local filesystem rather than a real S3/Snowflake
-stage. Each of those is a known extension, not an accidental gap.
+This repository provides a local service, not a hosted verification platform. Verification runs
+inline; there is no worker queue or third-party enrichment API. Authentication stops at tenant API
+keys. Exports write to the local filesystem rather than S3 or a warehouse stage. Syntax and DNS
+routing evidence cannot establish mailbox existence, delivery, identity, consent, or permission.
