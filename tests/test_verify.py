@@ -178,12 +178,14 @@ def test_rate_limit_waits_between_calls():
 def test_engine_maps_outcomes():
     valid = Verifier(MxChecker(resolve_fn=lambda _d, _t: ["mx"])).verify("ok@example.com")
     assert valid.status is EmailStatus.VALID and valid.heuristic_score == 0.9
+    assert valid.reason == "syntax passed and usable DNS mail route found (mx)"
 
     def nx(_d, _rdtype):
         raise dns.resolver.NXDOMAIN()
 
     invalid = Verifier(MxChecker(resolve_fn=nx)).verify("ok@nope.invalid")
     assert invalid.status is EmailStatus.INVALID
+    assert invalid.reason == "domain has no usable DNS mail route (nxdomain)"
 
     bad_syntax = Verifier(MxChecker(resolve_fn=lambda _d, _t: ["mx"])).verify("nope")
     assert bad_syntax.status is EmailStatus.INVALID and bad_syntax.heuristic_score == 0.0
@@ -193,3 +195,4 @@ def test_engine_maps_outcomes():
 
     risky = Verifier(MxChecker(resolve_fn=timeout, max_retries=0)).verify("ok@slow.com")
     assert risky.status is EmailStatus.RISKY and risky.heuristic_score == 0.5
+    assert risky.reason == "syntax passed but DNS routing evidence stayed transient"

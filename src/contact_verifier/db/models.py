@@ -35,10 +35,11 @@ def _now() -> datetime:
 
 
 class EmailStatus(enum.StrEnum):
-    UNKNOWN = "unknown"      # not yet verified
-    VALID = "valid"          # syntax ok and domain has mail exchangers
-    INVALID = "invalid"      # bad syntax, or domain cannot receive mail
-    RISKY = "risky"          # syntax valid but routing evidence is transient
+    # Compatibility wire values. They classify syntax and DNS evidence, not mailboxes.
+    UNKNOWN = "unknown"      # not yet assessed
+    VALID = "valid"          # syntax and a usable DNS mail route were observed
+    INVALID = "invalid"      # syntax failed or a definitive no-route state was observed
+    RISKY = "risky"          # DNS remained transient after bounded retries
 
 
 class Tenant(Base):
