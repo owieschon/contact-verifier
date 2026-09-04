@@ -80,11 +80,11 @@ def verify_contacts(api_key: str) -> dict:
 
 
 def build_server():
-    """Construct the FastMCP server with the tools registered. Imported lazily so
+    """Construct the MCP server with the tools registered. Imported lazily so
     the package does not hard-depend on `mcp` unless the server is run."""
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 
-    server = FastMCP("contact-verifier")
+    server = MCPServer("contact-verifier")
     for fn in (search_contacts, get_contact, contact_stats, verify_contacts):
         server.tool()(fn)
     return server
