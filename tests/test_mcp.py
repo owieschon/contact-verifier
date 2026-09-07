@@ -5,8 +5,11 @@ read-mostly tools are exercised directly. verify_contacts is checked for
 idempotency (nothing pending -> no DNS calls).
 """
 
+import asyncio
+
 import dns.resolver
 import pytest
+from mcp.server import MCPServer
 
 from contact_verifier.db import repository as repo
 from contact_verifier.mcp import server
@@ -61,6 +64,18 @@ def test_bad_key_raises(env):
 
 
 def test_build_server_registers_tools(env):
-    # the FastMCP server constructs without error and the tools are wired
     srv = server.build_server()
-    assert srv is not None
+    assert isinstance(srv, MCPServer)
+    tools = asyncio.run(srv.list_tools())
+    assert {tool.name for tool in tools} == {
+        "contact_stats",
+        "get_contact",
+        "search_contacts",
+        "verify_contacts",
+    }
+    result = asyncio.run(srv.call_tool("search_contacts", {"api_key": env}))
+    assert result.is_error is False
+    assert {row["status"] for row in result.structured_content["result"]} == {
+        "invalid",
+        "valid",
+    }
